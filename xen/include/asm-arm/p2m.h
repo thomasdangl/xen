@@ -167,6 +167,12 @@ void p2m_altp2m_check(struct vcpu *v, uint16_t idx)
     /* Not supported on ARM. */
 }
 
+static inline
+void p2m_altp2m_perform_fast_switch(struct vcpu *v, vm_event_request_t *req)
+{
+    /* Not supported on ARM. */
+}
+
 /*
  * Helper to restrict "p2m_ipa_bits" according the external entity
  * (e.g. IOMMU) requirements.

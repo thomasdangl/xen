@@ -1986,6 +1986,14 @@ int xc_altp2m_get_vcpu_p2m_idx(xc_interface *handle, uint32_t domid,
 int xc_altp2m_set_visibility(xc_interface *handle, uint32_t domid,
                              uint16_t view_id, bool visible);
 
+/*
+ * Operations to configure altp2m fast switching.
+ */
+int xc_altp2m_add_fast_switch(xc_interface *handle, uint32_t domid,
+		              uint32_t vcpu_id, uint64_t pgd,
+                              uint16_t view_rw, uint16_t view_x);
+int xc_altp2m_remove_fast_switch(xc_interface *handle, uint32_t domid,
+		              uint32_t vcpu_id, uint64_t pgd);
 /** 
  * Mem paging operations.
  * Paging is supported only on the x86 architecture in 64 bit mode, with

@@ -30,6 +30,7 @@
 #include <xen/mem_access.h>
 #include <asm/mem_sharing.h>
 #include <asm/page.h>    /* for pagetable_t */
+#include <public/vm_event.h>
 
 extern bool_t opt_hap_1gb, opt_hap_2mb;
 
@@ -870,6 +871,9 @@ bool p2m_altp2m_get_or_propagate(struct p2m_domain *ap2m, unsigned long gfn_l,
                                  mfn_t *mfn, p2m_type_t *p2mt,
                                  p2m_access_t *p2ma, unsigned int page_order);
 
+/* Apply altp2m fast switching when suitable */
+bool p2m_altp2m_perform_fast_switch(struct vcpu *v, vm_event_request_t *req);
+
 /* Make a specific alternate p2m valid */
 int p2m_init_altp2m_by_id(struct domain *d, unsigned int idx);
 
@@ -895,6 +899,11 @@ int p2m_altp2m_propagate_change(struct domain *d, gfn_t gfn,
 /* Set a specific p2m view visibility */
 int p2m_set_altp2m_view_visibility(struct domain *d, unsigned int idx,
                                    uint8_t visible);
+
+/* Operations to configure altp2m fast switching */
+int p2m_add_altp2m_fast_switch(struct vcpu *v, unsigned long pgd,
+                               unsigned int view_rw, unsigned int view_x);
+int p2m_remove_altp2m_fast_switch(struct vcpu *v, unsigned long pgd);
 #else
 struct p2m_domain *p2m_get_altp2m(struct vcpu *v);
 static inline void p2m_altp2m_check(struct vcpu *v, uint16_t idx) {}

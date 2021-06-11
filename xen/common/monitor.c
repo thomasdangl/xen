@@ -26,6 +26,7 @@
 #include <xsm/xsm.h>
 #include <asm/altp2m.h>
 #include <asm/monitor.h>
+#include <asm/p2m.h>
 #include <asm/vm_event.h>
 
 int monitor_domctl(struct domain *d, struct xen_domctl_monitor_op *mop)
@@ -92,6 +93,11 @@ int monitor_traps(struct vcpu *v, bool sync, vm_event_request_t *req)
 {
     int rc;
     struct domain *d = v->domain;
+
+#ifdef CONFIG_HVM
+    if ( p2m_altp2m_perform_fast_switch(v, req) )
+        return 1;
+#endif
 
     rc = vm_event_claim_slot(d, d->vm_event_monitor);
     switch ( rc )

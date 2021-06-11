@@ -27,12 +27,48 @@ altp2m_vcpu_initialise(struct vcpu *v)
         vcpu_pause(v);
 
     vcpu_altp2m(v).p2midx = 0;
+    INIT_LIST_HEAD(&vcpu_altp2m(v).fast_switch.list);
     atomic_inc(&p2m_get_altp2m(v)->active_vcpus);
 
     altp2m_vcpu_update_p2m(v);
 
     if ( v != current )
         vcpu_unpause(v);
+}
+
+static void
+altp2m_vcpu_fast_switch_destroy(struct vcpu *v)
+{
+    struct domain *d = v->domain;
+    struct arch_domain *ad = &d->arch;
+    struct altp2mvcpu_fast_switch *fast_switch, *tmp;
+
+    /*
+     * altp2m_vcpu_destroy can be called from complete_domain_destroy even
+     * when altp2m was never initialised. In this case the fast switching
+     * list below was never created, which means there is nothing to destroy.
+     */
+    if ( !ad->altp2m_active )
+        return;
+
+    list_for_each_entry_safe ( fast_switch, tmp,
+        &vcpu_altp2m(v).fast_switch.list, list )
+    {
+        list_del(&fast_switch->list);
+        xfree(fast_switch);
+    }
+
+    /* If we are called from do_altp2m_op, we can detach on the first vCPU. */
+    if ( ad->monitor.write_ctrlreg_mandated > 0 )
+    {
+        domain_pause(d);
+        ad->monitor.write_ctrlreg_mandated = 0;
+        ad->monitor.write_ctrlreg_enabled =
+            ad->monitor.write_ctrlreg_requested;
+        for_each_vcpu ( d, v )
+            hvm_update_guest_cr(v, 0);
+        domain_unpause(d);
+    }
 }
 
 void
@@ -46,6 +82,7 @@ altp2m_vcpu_destroy(struct vcpu *v)
     if ( (p2m = p2m_get_altp2m(v)) )
         atomic_dec(&p2m->active_vcpus);
 
+    altp2m_vcpu_fast_switch_destroy(v);
     altp2m_vcpu_disable_ve(v);
 
     vcpu_altp2m(v).p2midx = INVALID_ALTP2M;

@@ -324,6 +324,18 @@ struct xen_hvm_altp2m_set_visibility {
     uint8_t pad;
 };
 
+struct xen_hvm_altp2m_add_fast_switch {
+    uint32_t vcpu_id;
+    uint64_t pgd;
+    uint16_t view_rw;
+    uint16_t view_x;
+};
+
+struct xen_hvm_altp2m_remove_fast_switch {
+    uint32_t vcpu_id;
+    uint64_t pgd;
+};
+
 struct xen_hvm_altp2m_op {
     uint32_t version;   /* HVMOP_ALTP2M_INTERFACE_VERSION */
     uint32_t cmd;
@@ -358,6 +370,10 @@ struct xen_hvm_altp2m_op {
 #define HVMOP_altp2m_set_suppress_ve_multi 15
 /* Set visibility for a given altp2m view */
 #define HVMOP_altp2m_set_visibility       16
+/* Adds a preconfigured altp2m fast switch */
+#define HVMOP_altp2m_add_fast_switch      17
+/* Removes a preconfigured altp2m fast switch */
+#define HVMOP_altp2m_remove_fast_switch   18
     domid_t domain;
     uint16_t pad1;
     uint32_t pad2;
@@ -376,6 +392,8 @@ struct xen_hvm_altp2m_op {
         struct xen_hvm_altp2m_vcpu_disable_notify  disable_notify;
         struct xen_hvm_altp2m_get_vcpu_p2m_idx     get_vcpu_p2m_idx;
         struct xen_hvm_altp2m_set_visibility       set_visibility;
+        struct xen_hvm_altp2m_add_fast_switch      add_fast_switch;
+        struct xen_hvm_altp2m_remove_fast_switch   remove_fast_switch;
         uint8_t pad[64];
     } u;
 };

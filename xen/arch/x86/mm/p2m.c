@@ -38,6 +38,7 @@
 #include <asm/hvm/nestedhvm.h>
 #include <asm/altp2m.h>
 #include <asm/vm_event.h>
+#include <asm/monitor.h>
 #include <xsm/xsm.h>
 
 #include "mm-locks.h"
@@ -2094,6 +2095,108 @@ bool p2m_altp2m_get_or_propagate(struct p2m_domain *ap2m, unsigned long gfn_l,
     return true;
 }
 
+static bool p2m_altp2m_get_fast_switch_by_cr3(struct vcpu *v,
+                 struct altp2mvcpu_fast_switch **out,
+		 unsigned long cr3)
+{
+    struct altp2mvcpu_fast_switch *fast_switch, *fallback = NULL;
+    unsigned long pgd = cr3;
+
+    if ( !altp2m_active(v->domain) )
+        return false;
+
+    /* Mask off KPTI bits. */
+    if ( hvm_pcid_enabled(v) )
+        pgd &= ~0x1FFF;
+
+    list_for_each_entry ( fast_switch, &vcpu_altp2m(v).fast_switch.list, list )
+    {
+	if ( fast_switch->pgd == pgd )
+        {
+            *out = fast_switch;
+            return true;
+        }
+
+	if ( !fast_switch->pgd )
+		fallback = fast_switch;
+    }
+
+    if ( fallback )
+        *out = fallback;
+
+    return fallback != NULL;
+}
+
+
+bool p2m_altp2m_perform_fast_switch(struct vcpu *v, vm_event_request_t *req)
+{
+    struct domain *d = v->domain;
+    struct arch_domain *ad = &d->arch;
+    uint16_t p2midx = vcpu_altp2m(v).p2midx;
+    struct altp2mvcpu_fast_switch *fast_switch = NULL,
+                                  *prev_fast_switch = NULL;
+    bool unrequested = false;
+
+    if ( req->reason == VM_EVENT_REASON_WRITE_CTRLREG &&
+         req->u.write_ctrlreg.index == VM_EVENT_X86_CR3 )
+    {
+        /* Look up previous and current fast switch configurations. */
+        p2m_altp2m_get_fast_switch_by_cr3(v, &fast_switch,
+                                          req->u.write_ctrlreg.new_value);
+        p2m_altp2m_get_fast_switch_by_cr3(v, &prev_fast_switch,
+                                          req->u.write_ctrlreg.old_value);
+
+        /*
+	 * It usually doesn't matter which view we pick here, but most
+	 * modifications will be on code pages, so by going directly
+	 * to the execute view we can avoid the additional violation.
+	 */
+	if ( fast_switch )
+            p2midx = fast_switch->p2midx_x;
+	/* Switch to the default view when fast switching is disabled. */
+	else if ( prev_fast_switch )
+            p2midx = 0;
+
+        /* If the event was not requested, we can just drop it here. */
+        if ( !(ad->monitor.write_ctrlreg_requested &
+               monitor_ctrlreg_bitmask(VM_EVENT_X86_CR3)) )
+            unrequested = true;
+    }
+
+    /*
+     * Perform short-circuit altp2m state transition.
+     * This avoids excessive context-switches to the monitor.
+     */
+    if ( req->reason == VM_EVENT_REASON_MEM_ACCESS &&
+         p2m_altp2m_get_fast_switch_by_cr3(v, &fast_switch,
+				              v->arch.hvm.guest_cr[3]) )
+    {
+	if ( (req->u.mem_access.flags & MEM_ACCESS_X) &&
+             p2midx == fast_switch->p2midx_rw )
+	{
+             p2midx = fast_switch->p2midx_x;
+             unrequested = true;
+        }
+
+	if ( (req->u.mem_access.flags & MEM_ACCESS_RW) &&
+             p2midx == fast_switch->p2midx_x )
+        {
+             p2midx = fast_switch->p2midx_rw;
+             unrequested = true;
+        }
+    }
+
+    /* Switch altp2m view and resume execution. */
+    if ( p2midx != vcpu_altp2m(v).p2midx )
+    {
+        vcpu_pause_nosync(v);
+        p2m_switch_vcpu_altp2m_by_id(v, p2midx);
+        vcpu_unpause(v);
+    }
+
+    return unrequested;
+}
+
 enum altp2m_reset_type {
     ALTP2M_RESET,
     ALTP2M_DEACTIVATE
@@ -2791,6 +2894,108 @@ int p2m_set_altp2m_view_visibility(struct domain *d, unsigned int altp2m_idx,
             mfn_x(INVALID_MFN);
 
     altp2m_list_unlock(d);
+
+    return rc;
+}
+
+static void p2m_set_write_ctrlreg_for_cr3(struct domain *d, bool value)
+{
+    struct vcpu *v;
+    struct arch_domain *ad = &d->arch;
+    unsigned int mask = ad->monitor.write_ctrlreg_mandated;
+
+    if ( value )
+        mask |= monitor_ctrlreg_bitmask(VM_EVENT_X86_CR3);
+    else
+        mask &= ~monitor_ctrlreg_bitmask(VM_EVENT_X86_CR3);
+
+    if ( ad->monitor.write_ctrlreg_mandated == mask )
+        return;
+
+    ad->monitor.write_ctrlreg_mandated = mask;
+    ad->monitor.write_ctrlreg_enabled =
+        ad->monitor.write_ctrlreg_requested |
+        ad->monitor.write_ctrlreg_mandated;
+
+    for_each_vcpu ( d, v )
+        hvm_update_guest_cr(v, 0);
+}
+
+int p2m_add_altp2m_fast_switch(struct vcpu *v, unsigned long pgd,
+                               unsigned int view_rw, unsigned int view_x)
+{
+    int rc = 0;
+    struct domain *d = v->domain;
+    struct altp2mvcpu_fast_switch *fast_switch;
+
+    if ( unlikely(view_rw == view_x || view_rw <= 0 || view_x <= 0 ||
+                  view_rw >= MAX_ALTP2M || view_x >= MAX_ALTP2M) )
+        return -EINVAL;
+
+    rc = domain_pause_except_self(d);
+    if ( rc )
+        return rc;
+
+    altp2m_list_lock(d);
+
+    /* Prevent insertion of duplicates. */
+    list_for_each_entry ( fast_switch, &vcpu_altp2m(v).fast_switch.list, list )
+        if ( fast_switch->pgd == pgd )
+        {
+            altp2m_list_unlock(d);
+	    domain_unpause_except_self(d);
+            return -EPERM;
+        }
+
+    fast_switch = xmalloc(struct altp2mvcpu_fast_switch);
+    fast_switch->pgd = pgd;
+    fast_switch->p2midx_rw = view_rw;
+    fast_switch->p2midx_x = view_x;
+    list_add(&fast_switch->list, &vcpu_altp2m(v).fast_switch.list);
+
+    p2m_set_write_ctrlreg_for_cr3(d, true);
+    altp2m_list_unlock(d);
+
+    domain_unpause_except_self(d);
+
+    return rc;
+}
+
+
+int p2m_remove_altp2m_fast_switch(struct vcpu *v, unsigned long pgd)
+{
+    int rc = -EINVAL;
+    struct domain *d = v->domain;
+    struct list_head *it, *tmp;
+    struct altp2mvcpu_fast_switch *fast_switch;
+    bool remaining = false;
+
+    rc = domain_pause_except_self(d);
+    if ( rc )
+        return rc;
+
+    altp2m_list_lock(d);
+
+    list_for_each_safe ( it, tmp, &vcpu_altp2m(v).fast_switch.list )
+    {
+        fast_switch = list_entry( it, struct altp2mvcpu_fast_switch, list );
+
+        if ( fast_switch->pgd == pgd )
+        {
+            list_del(it);
+            xfree(fast_switch);
+            rc = 0;
+        }
+	else
+            remaining = true;
+    }
+
+    if ( !rc && !remaining )
+        p2m_set_write_ctrlreg_for_cr3(d, false);
+
+    altp2m_list_unlock(d);
+
+    domain_unpause_except_self(d);
 
     return rc;
 }

@@ -403,6 +403,8 @@ struct arch_domain
     /* Arch-specific monitor options */
     struct {
         unsigned int write_ctrlreg_enabled                                 : 4;
+        unsigned int write_ctrlreg_mandated                                : 4;
+        unsigned int write_ctrlreg_requested                               : 4;
         unsigned int write_ctrlreg_sync                                    : 4;
         unsigned int write_ctrlreg_onchangeonly                            : 4;
         unsigned int singlestep_enabled                                    : 1;

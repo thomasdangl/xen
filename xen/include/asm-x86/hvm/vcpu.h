@@ -137,6 +137,13 @@ struct nestedvcpu {
 
 #define vcpu_nestedhvm(v) ((v)->arch.hvm.nvcpu)
 
+struct altp2mvcpu_fast_switch {
+    uint64_t pgd;
+    uint16_t p2midx_rw;
+    uint16_t p2midx_x;
+    struct list_head list;
+};
+
 struct altp2mvcpu {
     /*
      * #VE information page.  This pointer being non-NULL indicates that a
@@ -145,6 +152,8 @@ struct altp2mvcpu {
      */
     struct page_info *veinfo_pg;
     uint16_t    p2midx;         /* alternate p2m index */
+    /* list of all active fast switch mappings for this vcpu */
+    struct altp2mvcpu_fast_switch fast_switch;
 };
 
 #define vcpu_altp2m(v) ((v)->arch.hvm.avcpu)

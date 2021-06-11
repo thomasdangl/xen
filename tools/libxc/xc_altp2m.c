@@ -434,3 +434,54 @@ int xc_altp2m_set_visibility(xc_interface *handle, uint32_t domid,
     xc_hypercall_buffer_free(handle, arg);
     return rc;
 }
+
+int xc_altp2m_add_fast_switch(xc_interface *handle, uint32_t domid,
+		              uint32_t vcpu_id, uint64_t pgd,
+			      uint16_t view_rw, uint16_t view_x)
+{
+    int rc;
+
+    DECLARE_HYPERCALL_BUFFER(xen_hvm_altp2m_op_t, arg);
+
+    arg = xc_hypercall_buffer_alloc(handle, arg, sizeof(*arg));
+    if ( arg == NULL )
+        return -1;
+
+    arg->version = HVMOP_ALTP2M_INTERFACE_VERSION;
+    arg->cmd = HVMOP_altp2m_add_fast_switch;
+    arg->domain = domid;
+    arg->u.add_fast_switch.vcpu_id = vcpu_id;
+    arg->u.add_fast_switch.pgd = pgd;
+    arg->u.add_fast_switch.view_rw = view_rw;
+    arg->u.add_fast_switch.view_x = view_x;
+
+    rc = xencall2(handle->xcall, __HYPERVISOR_hvm_op, HVMOP_altp2m,
+                  HYPERCALL_BUFFER_AS_ARG(arg));
+
+    xc_hypercall_buffer_free(handle, arg);
+    return rc;
+}
+
+int xc_altp2m_remove_fast_switch(xc_interface *handle, uint32_t domid,
+		                 uint32_t vcpu_id, uint64_t pgd)
+{
+    int rc;
+
+    DECLARE_HYPERCALL_BUFFER(xen_hvm_altp2m_op_t, arg);
+
+    arg = xc_hypercall_buffer_alloc(handle, arg, sizeof(*arg));
+    if ( arg == NULL )
+        return -1;
+
+    arg->version = HVMOP_ALTP2M_INTERFACE_VERSION;
+    arg->cmd = HVMOP_altp2m_remove_fast_switch;
+    arg->domain = domid;
+    arg->u.remove_fast_switch.vcpu_id = vcpu_id;
+    arg->u.remove_fast_switch.pgd = pgd;
+
+    rc = xencall2(handle->xcall, __HYPERVISOR_hvm_op, HVMOP_altp2m,
+                  HYPERCALL_BUFFER_AS_ARG(arg));
+
+    xc_hypercall_buffer_free(handle, arg);
+    return rc;
+}

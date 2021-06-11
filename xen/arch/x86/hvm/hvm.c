@@ -4552,6 +4552,8 @@ static int do_altp2m_op(
     case HVMOP_altp2m_change_gfn:
     case HVMOP_altp2m_get_p2m_idx:
     case HVMOP_altp2m_set_visibility:
+    case HVMOP_altp2m_add_fast_switch:
+    case HVMOP_altp2m_remove_fast_switch:
         break;
 
     default:
@@ -4841,6 +4843,34 @@ static int do_altp2m_op(
             rc = p2m_set_altp2m_view_visibility(d, idx,
                                                 a.u.set_visibility.visible);
         break;
+    }
+
+    case HVMOP_altp2m_add_fast_switch:
+    {
+        if ( a.u.add_fast_switch.vcpu_id >= d->max_vcpus )
+            rc = -EINVAL;
+        else if ( !altp2m_active(d) || !cpu_has_vmx_virt_exceptions )
+            rc = -EOPNOTSUPP;
+        else
+            rc = p2m_add_altp2m_fast_switch(
+                     d->vcpu[a.u.add_fast_switch.vcpu_id],
+                     a.u.add_fast_switch.pgd,
+                     a.u.add_fast_switch.view_rw,
+                     a.u.add_fast_switch.view_x);
+	break;
+    }
+
+    case HVMOP_altp2m_remove_fast_switch:
+    {
+        if ( a.u.remove_fast_switch.vcpu_id >= d->max_vcpus )
+            rc = -EINVAL;
+        else if ( !altp2m_active(d) || !cpu_has_vmx_virt_exceptions )
+            rc = -EOPNOTSUPP;
+        else
+            rc = p2m_remove_altp2m_fast_switch(
+                     d->vcpu[a.u.remove_fast_switch.vcpu_id],
+                     a.u.remove_fast_switch.pgd);
+	break;
     }
 
     default:
